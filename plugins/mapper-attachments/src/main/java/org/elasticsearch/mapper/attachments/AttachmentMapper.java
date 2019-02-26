@@ -432,6 +432,16 @@ public class AttachmentMapper extends FieldMapper {
         String name = null;
         String language = null;
 
+        // MAINTAINER Yu Minghao <yuminghao@ones.ai>
+        // mapper-attachment原版已支持用户传入 _content\_content_type\_name\_language\_indexed_chars\_detect_language\
+        // 为了把tika提取到外部, 需要增加传入参数 _close_parser(是否关闭解析器)
+        // 并且补充外部传入字段 _title\_author\_date\_keywords\
+        boolean closeParser = false;
+        String title = null;
+        String date = null;
+        String author = null;
+        String keywords = null;
+
         XContentParser parser = context.parser();
         XContentParser.Token token = parser.currentToken();
         if (token == XContentParser.Token.VALUE_STRING) {
@@ -450,6 +460,14 @@ public class AttachmentMapper extends FieldMapper {
                         name = parser.text();
                     } else if ("_language".equals(currentFieldName)) {
                         language = parser.text();
+                    } else if ("_title".equals(currentFieldName)) {
+                        title = parser.text();
+                    } else if ("_author".equals(currentFieldName)) {
+                        author = parser.text();
+                    } else if ("_keywords".equals(currentFieldName)) {
+                        keywords = parser.text();
+                    } else if ("_date".equals(currentFieldName)) {
+                        date = parser.text();
                     }
                 } else if (token == XContentParser.Token.VALUE_NUMBER) {
                     if ("_indexed_chars".equals(currentFieldName) || "_indexedChars".equals(currentFieldName)) {
@@ -458,6 +476,8 @@ public class AttachmentMapper extends FieldMapper {
                 } else if (token == XContentParser.Token.VALUE_BOOLEAN) {
                     if ("_detect_language".equals(currentFieldName) || "_detectLanguage".equals(currentFieldName)) {
                         langDetect = parser.booleanValue();
+                    } else if ("_close_parser".equals(currentFieldName)) {
+                        closeParser = parser.booleanValue();
                     }
                 }
             }
@@ -466,6 +486,52 @@ public class AttachmentMapper extends FieldMapper {
         // Throw clean exception when no content is provided Fix #23
         if (content == null) {
             throw new MapperParsingException("No content is provided.");
+        }
+
+        // 关闭解析器
+        if (closeParser) {
+            String contentStr = new String(content, "UTF-8");
+            int length = contentStr.length();
+            context = context.createExternalValueContext(contentStr);
+            contentMapper.parse(context);
+            context = context.createExternalValueContext(length);
+            contentLengthMapper.parse(context);
+
+            if (langDetect || language != null) {
+                context = context.createExternalValueContext(language);
+                languageMapper.parse(context);
+            }
+
+            if (name != null) {
+                context = context.createExternalValueContext(name);
+                nameMapper.parse(context);
+            }
+
+            if (date != null) {
+                context = context.createExternalValueContext(date);
+                dateMapper.parse(context);
+            }
+
+            if (title != null) {
+                context = context.createExternalValueContext(title);
+                titleMapper.parse(context);
+            }
+
+            if (author != null) {
+                context = context.createExternalValueContext(author);
+                authorMapper.parse(context);
+            }
+
+            if (keywords != null) {
+                context = context.createExternalValueContext(keywords);
+                keywordsMapper.parse(context);
+            }
+
+            if (contentType != null) {
+                context = context.createExternalValueContext(contentType);
+                contentTypeMapper.parse(context);
+            }
+            return null;
         }
 
         Metadata metadata = new Metadata();
