@@ -435,12 +435,13 @@ public class AttachmentMapper extends FieldMapper {
         // MAINTAINER Yu Minghao <yuminghao@ones.ai>
         // mapper-attachment原版已支持用户传入 _content\_content_type\_name\_language\_indexed_chars\_detect_language\
         // 为了把tika提取到外部, 需要增加传入参数 _close_parser(是否关闭解析器)
-        // 并且补充外部传入字段 _title\_author\_date\_keywords\
+        // 并且补充外部传入字段 _title\_author\_date\_keywords\_content_length
         boolean closeParser = false;
         String title = null;
         String date = null;
         String author = null;
         String keywords = null;
+        int contentLength = -1;
 
         XContentParser parser = context.parser();
         XContentParser.Token token = parser.currentToken();
@@ -472,6 +473,8 @@ public class AttachmentMapper extends FieldMapper {
                 } else if (token == XContentParser.Token.VALUE_NUMBER) {
                     if ("_indexed_chars".equals(currentFieldName) || "_indexedChars".equals(currentFieldName)) {
                         indexedChars = parser.intValue();
+                    } else if ("_content_length".equals(currentFieldName)) {
+                        contentLength = parser.intValue();
                     }
                 } else if (token == XContentParser.Token.VALUE_BOOLEAN) {
                     if ("_detect_language".equals(currentFieldName) || "_detectLanguage".equals(currentFieldName)) {
@@ -483,18 +486,31 @@ public class AttachmentMapper extends FieldMapper {
             }
         }
 
-        // Throw clean exception when no content is provided Fix #23
-        if (content == null) {
-            throw new MapperParsingException("No content is provided.");
-        }
 
         // 关闭解析器
         if (closeParser) {
-            String contentStr = new String(content, "UTF-8");
-            int length = contentStr.length();
-            context = context.createExternalValueContext(contentStr);
-            contentMapper.parse(context);
-            context = context.createExternalValueContext(length);
+            try {
+                String contentStr = new String(content, "UTF-8");
+                context = context.createExternalValueContext(contentStr);
+                contentMapper.parse(context);
+            } catch (Throwable e) {
+                // 在文解析服务中tika解析错误时, 应该忽略错误,
+                // 此时客户端的正确操作是 在请求中必须传入参数 _close_parser = true, 并且不要传入参数 _content
+                if (!ignoreErrors) {
+                    logger.trace("exception caught", e);
+                    throw new MapperParsingException("Failed to extract [" + indexedChars + "] characters of text for [" + name + "] : "
+                            + e.getMessage(), e);
+                } else {
+                    logger.debug("Failed to extract [{}] characters of text for [{}]: [{}]", indexedChars, name, e.getMessage());
+                    logger.trace("exception caught", e);
+                }
+                return null;
+            }
+
+            if (contentLength == -1) {
+                throw new MapperParsingException("No _content_length is provided.");
+            }
+            context = context.createExternalValueContext(contentLength);
             contentLengthMapper.parse(context);
 
             if (langDetect || language != null) {
@@ -533,6 +549,12 @@ public class AttachmentMapper extends FieldMapper {
             }
             return null;
         }
+
+        // Throw clean exception when no content is provided Fix #23
+        if (content == null) {
+            throw new MapperParsingException("No content is provided.");
+        }
+        
 
         Metadata metadata = new Metadata();
         if (contentType != null) {
